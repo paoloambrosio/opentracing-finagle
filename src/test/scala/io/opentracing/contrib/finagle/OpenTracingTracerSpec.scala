@@ -1,5 +1,6 @@
 package io.opentracing.contrib.finagle
 
+import com.twitter.finagle.tracing.Annotation.BinaryAnnotation
 import com.twitter.finagle.tracing._
 import com.twitter.util.{Duration, Time}
 import io.opentracing.mock.MockTracer
@@ -7,44 +8,55 @@ import org.scalatest._
 
 class OpenTracingTracerSpec extends WordSpec with Matchers with LoneElement {
 
+  lazy val StopAnnotation = Annotation.ServerSend()
+
   "record" should {
 
-    "set span timestamp and duration" in new TestContext {
-      finagleTracer.record(fakeRecord.copy(
-        timestamp = Time.fromMicroseconds(1000),
-        duration = Some(Duration.fromMicroseconds(234))
-      ))
+    "publish and forget spans when receiving ClientRecv() or ServerSend()" in new TestContext {
+      Seq(
+        Annotation.ClientRecv(),
+        Annotation.ServerSend()
+      ).foreach { ann =>
+        finagleTracer.record(fakeRecord.copy(annotation = ann))
+      }
 
-      val span = openTracer.finishedSpans().loneElement
-      span.startMicros() shouldBe 1000
-      span.finishMicros() shouldBe 1234
+      openTracer.finishedSpans().size() shouldBe 2
     }
 
-    "not create a span if duration is missing" in new TestContext {
-      finagleTracer.record(fakeRecord.copy(
-        timestamp = Time.fromMicroseconds(1000),
-        duration = None
-      ))
+    "set span name when receiving Rpc(name)" in new TestContext {
+      Seq(
+        Annotation.Rpc("name"),
+        StopAnnotation
+      ).foreach { ann =>
+        finagleTracer.record(fakeRecord.copy(annotation = ann))
+      }
 
-      openTracer.finishedSpans() shouldBe empty
+      val span = openTracer.finishedSpans().loneElement
+      span.operationName() shouldBe "name"
     }
 
     "ignore active span" in new TestContext {
       openTracer.buildSpan("active").startActive(true)
-
-      finagleTracer.record(fakeRecord)
+      Seq(
+        StopAnnotation
+      ).foreach { ann =>
+        finagleTracer.record(fakeRecord.copy(annotation = ann))
+      }
 
       val span = openTracer.finishedSpans().loneElement
       span.references shouldBe empty
     }
 
-    "set span name" in new TestContext {
-      finagleTracer.record(fakeRecord.copy(
-        annotation = Annotation.Rpc("name")
-      ))
+    "record duration from first to last record" in new TestContext {
+      Seq(
+        fakeRecord.copy(timestamp = Time.fromMicroseconds(1000)),
+        fakeRecord.copy(timestamp = Time.fromMicroseconds(1111)),
+        fakeRecord.copy(timestamp = Time.fromMicroseconds(1234), annotation = StopAnnotation)
+      ).foreach { finagleTracer.record }
 
       val span = openTracer.finishedSpans().loneElement
-      span.operationName shouldBe "name"
+      span.startMicros() shouldBe 1000
+      span.finishMicros() shouldBe 1234
     }
 
   }
@@ -56,8 +68,8 @@ class OpenTracingTracerSpec extends WordSpec with Matchers with LoneElement {
     lazy val fakeRecord = Record(
       TraceId(None, None, SpanId(2), None, Flags(0), None),
       Time.fromMicroseconds(0),
-      Annotation.Rpc(""),
-      Some(Duration.fromMicroseconds(1))
+      Annotation.BinaryAnnotation("",""),
+      None
     )
   }
 }
