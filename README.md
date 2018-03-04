@@ -1,6 +1,8 @@
 # OpenTracing Finagle Instrumentation
 
-TODO
+OpenTracing interface does not expose IDs, while Finagle generates those IDs.
+
+*This instrumentation is likely to be impossible to write at this stage.*
 
 Example trace of an HTTP service calling a Thrift service
 ```
